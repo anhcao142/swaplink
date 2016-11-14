@@ -9,20 +9,6 @@ var csv     = require('fast-csv');
 var mkdirp  = require('mkdirp');
 
 
-// fs.readFile(join(config.inputDir, 'index.html'), 'utf8', function (err, html) {
-//     var $ = cheerio.load(html);
-
-//     console.log($('h1').html());
-// })
-
-// fs.readdir(config.inputDir, (err, files) => {
-//     async.each(files, (file, callback) => {
-//         fs.lstat(join(config.inputDir, file), (err, stats) => {
-//             console.log(join(config.inputDir, file));
-//             console.log(stats.isDirectory());
-//         })
-//     })
-// })
 
 var filesPath = './resource/filesPath.csv';
 var fileCountPath = './resource/fileCount';
@@ -35,53 +21,57 @@ var dirCount  = 0;
 async.series([
     function (callback) {
         findHtmlFiles(callback);
-    },
-    function (callback) {
-        loadHtmlFiles(callback);
     }],
     function done(err) {
-        console.log('Done');
+        loadHtmlFiles();
     })
 
 
 
 
-
-
-function loadHtmlFiles(callback) {
+function loadHtmlFiles() {
     var remaining = '';
     var rs = fs.createReadStream(join(__dirname, filesPath), {encoding: 'utf8'});
+    var processFileCount = 0;
+
+    var curRound = 0;
+    var finishRound = -1;
+
+    rs.on('finish', function () {
+        finishRound = curRound;
+    })
 
     loadTemplate(function (err, templateHtml) {
         rs.on('data', chunk => {
+            // console.log('Read round:', ++curRound);
             var files   = chunk.split(',');
 
-            files[0]    = files[0] + remaining;
+            files[0]    = remaining + files[0];
             remaining   = files.splice(files.length - 1, files.length)[0];
 
             async.eachLimit(files, 5, (file, callback) => {
                 if (file.indexOf('.html') === -1) {
                     copyFile(file);
                     return callback();
+                } else {
+                    fs.readFile(join(__dirname, config.inputDir, file), 'utf8', (err, html) => {
+                        if (err) return callback(err);
+
+                        var newHtml = swapLink(html, templateHtml);
+                        writeFile(file, newHtml);
+
+                        callback();
+                    })
                 }
-
-                fs.readFile(join(__dirname, config.inputDir, file), 'utf8', (err, html) => {
-                    if (err) return callback(err);
-
-                    var newHtml = swapLink(html, templateHtml);
-
-                    writeFile(file, newHtml);
-
-                    callback();
-                })
             }, function (err) {
-                if (err) {
-                    console.log(err.stack);
+                if (err) return console.log(err.stack);
+
+                processFileCount += files.length;
+                console.log('Progress:', processFileCount + '/' + fileCount, 'files');
+
+                if (curRound == finishRound) {
+                    console.log('Done');
                 }
-
-                console.log('Progress:', files.length + '/' + fileCount, 'files');
-
-                callback();
             })
         })
     })
@@ -121,11 +111,9 @@ function copyFile(file) {
 
 function createDirIfNotExist(dir, callback) {
     var fullpath = path.resolve(dir);
-    // console.log(fullpath);
 
     fs.lstat(fullpath, function (err, file) {
         if (err) {
-            // console.log(err);
             mkdirp(fullpath, callback);
         } else {
             callback();
@@ -137,6 +125,8 @@ function createDirIfNotExist(dir, callback) {
 function findHtmlFiles(callback) {
     var allDirs = [config.inputDir];
     var ws      = fs.createWriteStream(join(__dirname, filesPath));
+
+    console.log('Counting files...');
 
     ws.on('error', function (err) {
         console.log(err);
@@ -173,8 +163,7 @@ function findHtmlFiles(callback) {
         function done() {
             ws.end();
             fs.writeFileSync(join(__dirname, fileCountPath), fileCount);
-            console.log('Finished checking files - there are total',
-                        fileCount, 'files');
+            console.log('Finish, total files:', fileCount);
 
 
             callback();
